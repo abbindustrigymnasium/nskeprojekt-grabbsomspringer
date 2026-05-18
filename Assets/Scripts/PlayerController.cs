@@ -15,8 +15,10 @@ public class PlayerController : MonoBehaviour
 
 
     [SerializeField] private float moveSpeed = 5f;
+    [Range(0, 1f)]
+    [SerializeField] private float animationMoveSpeed = 5f;
     [SerializeField] private float jumpVelocity = 7f;
-    [SerializeField] private float gravity = -9.82f;
+    [SerializeField] private float gravity = -4f;
 
     private void OnEnable()
     {
@@ -55,7 +57,7 @@ public class PlayerController : MonoBehaviour
         verticalVelocity += gravity * Time.deltaTime;
 
         Vector3 velocity = Vector3.zero;
-        velocity.x = moveSpeed;
+        velocity.z = moveSpeed;
         velocity.y = verticalVelocity;
 
         characterController.Move(velocity * Time.deltaTime);
@@ -64,7 +66,7 @@ public class PlayerController : MonoBehaviour
         {
             characterAnimator.SetBool("Grounded", characterController.isGrounded);
             characterAnimator.SetFloat("VerticalVel", verticalVelocity);
-            characterAnimator.SetFloat("Speed", 1f, 0.15f, Time.deltaTime);
+            characterAnimator.SetFloat("Speed", animationMoveSpeed, 0.15f, Time.deltaTime);
         }
 
     }
