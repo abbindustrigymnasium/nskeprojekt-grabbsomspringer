@@ -85,3 +85,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c20a7a43c8f034d2da6eb101f7bcdf1c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CharacterController
+  moveAction: {fileID: 0}
+  jumpAction: {fileID: 0}
+  crouchAction: {fileID: 0}
+  characterAnimator: {fileID: 0}
+  characterController: {fileID: 0}
+  obstacleMask:
+    serializedVersion: 2
+    m_Bits: 0
+  frontCheckDistance: 0.25
+  sideHitNormalThreshold: 0.6
+  moveSpeed: 5
+  animationMoveSpeed: 1
+  jumpVelocity: 7
+  gravity: -4
