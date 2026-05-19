@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 
 public class PlayerController : MonoBehaviour
 {
@@ -9,10 +10,14 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private InputActionReference crouchAction;
     private Vector2 moveInput;
     private bool isCrouching;
+    private bool isDead;
     private float verticalVelocity = 0f;
     [SerializeField] private Animator characterAnimator;
     [SerializeField] private CharacterController characterController;
 
+    [SerializeField] private LayerMask obstacleMask;
+    [SerializeField] private float frontCheckDistance = 0.25f;
+    [SerializeField] private float sideHitNormalThreshold = 0.6f;
 
     [SerializeField] private float moveSpeed = 5f;
     [Range(0, 1f)]
@@ -46,14 +51,22 @@ public class PlayerController : MonoBehaviour
     void Start()
     {
         characterController = GetComponent<CharacterController>();
+        Time.timeScale = 1.0f;
+        Time.fixedDeltaTime = 0.02F * Time.timeScale;
     }
 
     // Update is called once per frame
 
     private void Update()
     {
-        
+        CheckFrontObstacleDeath();
+
         bool grounded = characterController.isGrounded;
+        if (grounded && verticalVelocity < 0f)
+        {
+            verticalVelocity = -2f;
+        }
+
         verticalVelocity += gravity * Time.deltaTime;
 
         Vector3 velocity = Vector3.zero;
@@ -62,7 +75,7 @@ public class PlayerController : MonoBehaviour
 
         characterController.Move(velocity * Time.deltaTime);
 
-         if (characterAnimator != null)
+        if (characterAnimator != null)
         {
             characterAnimator.SetBool("Grounded", characterController.isGrounded);
             characterAnimator.SetFloat("VerticalVel", verticalVelocity);
@@ -70,11 +83,11 @@ public class PlayerController : MonoBehaviour
         }
 
     }
-    
+
 
     private void OnCrouchStarted(InputAction.CallbackContext context)
     {
-        characterAnimator.SetBool("Crouch",true);
+        characterAnimator.SetBool("Crouch", true);
     }
 
     private void OnCrouchEnded(InputAction.CallbackContext context)
@@ -90,6 +103,61 @@ public class PlayerController : MonoBehaviour
 
         characterAnimator.ResetTrigger("Jump");
         characterAnimator.SetTrigger("Jump");
-    
+
+    }
+
+    private void CheckFrontObstacleDeath()
+    {
+        if (isDead)
+            return;
+
+        Vector3 center = transform.position + characterController.center;
+
+        float radius = characterController.radius * 0.9f;
+        float halfHeight = characterController.height * 0.5f;
+
+        Vector3 bottom = center + Vector3.up * (-halfHeight + radius);
+        Vector3 top = center + Vector3.up * (halfHeight - radius);
+
+        Vector3 direction = Vector3.forward;
+
+
+        // Draw the cast direction
+        Debug.DrawLine(center, center + direction * frontCheckDistance, Color.cyan);
+
+        bool hitSomething = Physics.CapsuleCast(
+            bottom,
+            top,
+            radius,
+            direction,
+            out RaycastHit hit,
+            frontCheckDistance,
+            obstacleMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        if (hitSomething)
+        {
+            Debug.DrawRay(hit.point, hit.normal * 1.5f, Color.red);
+
+            Debug.Log(
+                $"FRONT SENSOR HIT: {hit.collider.name} | normal={hit.normal} | point={hit.point}"
+            );
+
+            bool isWallInFront =
+                Vector3.Dot(hit.normal, -direction) > sideHitNormalThreshold &&
+                hit.normal.y < 0.5f;
+
+            if (isWallInFront)
+            {
+                Debug.Log("DEATH: front wall detected");
+                Die();
+            }
+        }
+    }
+    private void Die()
+    {
+        string currentSceneName = SceneManager.GetActiveScene().name;
+        SceneManager.LoadScene(currentSceneName);
     }
 }
