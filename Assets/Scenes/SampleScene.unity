@@ -194,6 +194,7 @@ GameObject:
   - component: {fileID: 330585544}
   - component: {fileID: 330585547}
   - component: {fileID: 330585548}
+  - component: {fileID: 330585549}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -332,6 +333,23 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraFollow
   cameraTarget: {fileID: 1274486470}
+--- !u!114 &330585549
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 330585543}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.Volume
+  m_IsGlobal: 1
+  priority: 1
+  blendDistance: 0
+  weight: 1
+  sharedProfile: {fileID: 11400000, guid: fe3d044f406534b7d939f2c789c987a2, type: 2}
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -637,7 +655,7 @@ MonoBehaviour:
   backgroundChunkLength: 150
   backgroundChunksOnScreen: 2
   backgroundOffset: {x: 0, y: 0, z: 0}
-  speed: 6
+  speed: 9
   despawnZ: -25
   backgroundDespawnZ: -112
 --- !u!4 &1182269586
@@ -710,7 +728,7 @@ PrefabInstance:
     m_Modifications:
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: gravity
-      value: -13
+      value: -12
       objectReference: {fileID: 0}
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: moveSpeed
@@ -730,7 +748,7 @@ PrefabInstance:
       objectReference: {fileID: 7040659881675835329, guid: 052faaac586de48259a63d0c4782560b, type: 3}
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: jumpVelocity
-      value: 9
+      value: 5
       objectReference: {fileID: 0}
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: characterAnimator
@@ -738,7 +756,7 @@ PrefabInstance:
       objectReference: {fileID: 1274486465}
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: animationMoveSpeed
-      value: 0.88
+      value: 0.66
       objectReference: {fileID: 0}
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: normalHitThreshold
@@ -751,6 +769,10 @@ PrefabInstance:
     - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: obstacleMask.m_Bits
       value: 4294967295
+      objectReference: {fileID: 0}
+    - target: {fileID: 716938545088953812, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
+      propertyPath: rollLandingVelocity
+      value: -10
       objectReference: {fileID: 0}
     - target: {fileID: 1652703438265038413, guid: 935e689d4347e4098b3d4f68b48c8c2a, type: 3}
       propertyPath: m_Name

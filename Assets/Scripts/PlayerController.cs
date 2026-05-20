@@ -24,6 +24,10 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float animationMoveSpeed = 5f;
     [SerializeField] private float jumpVelocity = 7f;
     [SerializeField] private float gravity = -4f;
+    [SerializeField] private float rollLandingVelocity = -12f;
+    [SerializeField] private int maxJumps = 2;
+    private int jumpsUsed = 0;
+    private bool wasGrounded;
 
     private void OnEnable()
     {
@@ -51,7 +55,7 @@ public class PlayerController : MonoBehaviour
     void Start()
     {
         characterController = GetComponent<CharacterController>();
-        Time.timeScale = 1.0f;
+        Time.timeScale = 0.4f;
         Time.fixedDeltaTime = 0.02F * Time.timeScale;
     }
 
@@ -65,6 +69,7 @@ public class PlayerController : MonoBehaviour
         if (grounded && verticalVelocity < 0f)
         {
             verticalVelocity = -2f;
+            jumpsUsed = 0;
         }
 
         verticalVelocity += gravity * Time.deltaTime;
@@ -74,7 +79,16 @@ public class PlayerController : MonoBehaviour
         velocity.y = verticalVelocity;
 
         characterController.Move(velocity * Time.deltaTime);
+        characterController.Move(velocity * Time.deltaTime);
 
+        bool groundedAfterMove = characterController.isGrounded;
+
+        if (!wasGrounded && groundedAfterMove)
+        {
+            OnLanded(verticalVelocity);
+        }
+
+        wasGrounded = groundedAfterMove;
         if (characterAnimator != null)
         {
             characterAnimator.SetBool("Grounded", characterController.isGrounded);
@@ -83,7 +97,21 @@ public class PlayerController : MonoBehaviour
         }
 
     }
+    private void OnLanded(float landingVelocity)
+    {
+        if (landingVelocity <= rollLandingVelocity)
+        {
+            characterAnimator.ResetTrigger("Jump");
+            characterAnimator.ResetTrigger("Roll");
+            characterAnimator.SetTrigger("Roll");
 
+            Debug.Log($"Roll landing. Velocity: {landingVelocity}");
+        }
+        else
+        {
+            Debug.Log($"Normal landing. Velocity: {landingVelocity}");
+        }
+    }
 
     private void OnCrouchStarted(InputAction.CallbackContext context)
     {
@@ -96,14 +124,14 @@ public class PlayerController : MonoBehaviour
     }
     private void OnJump(InputAction.CallbackContext context)
     {
-        if (!characterController.isGrounded)
+        if (jumpsUsed >= maxJumps)
             return;
 
         verticalVelocity = jumpVelocity;
+        jumpsUsed++;
 
         characterAnimator.ResetTrigger("Jump");
         characterAnimator.SetTrigger("Jump");
-
     }
 
     private void CheckFrontObstacleDeath()
