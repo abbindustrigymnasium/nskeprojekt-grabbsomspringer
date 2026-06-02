@@ -19,6 +19,17 @@ public class BarInteractable : MonoBehaviour
         }
     }
 
+    public Transform AttachPointTransform
+    {
+        get
+        {
+            if (attachPoint != null)
+                return attachPoint;
+
+            return transform;
+        }
+    }
+
     private void OnDrawGizmos()
     {
         if (!drawDebug)

@@ -9,110 +9,85 @@ public class PlayerController : MonoBehaviour
     {
         Normal,
         Rolling,
-        BarSnapping,
-        BarSwinging
+        BarReaching,
+        BarPulling,
+        BarAttached
     }
 
-    public float MoveSpeed => movement.moveSpeed;
-    public float JumpVelocity => movement.jumpVelocity;
-    public float Gravity => movement.gravity;
-    public int MaxJumps => movement.maxJumps;
+    public float MoveSpeed => moveSpeed;
+    public float JumpVelocity => jumpVelocity;
+    public float Gravity => gravity;
+    public int MaxJumps => maxJumps;
 
     public float StandingHeight => standingHeight;
-    public float RollHeight => standingHeight * roll.rollHeightMultiplier;
-    public float RollCeilingClearance => roll.rollCeilingClearance;
+    public float RollHeight => standingHeight * rollHeightMultiplier;
+    public float RollCeilingClearance => rollCeilingClearance;
     public float RollTotalClearance => RollHeight + RollCeilingClearance;
 
-    [System.Serializable]
-    private class InputSettings
-    {
-        public InputActionReference moveAction;
-        public InputActionReference jumpAction;
-        public InputActionReference crouchAction;
-    }
-
-    [System.Serializable]
-    private class MovementSettings
-    {
-        public float moveSpeed = 5f;
-        public float jumpVelocity = 7f;
-        public float gravity = -4f;
-        public int maxJumps = 2;
-
-        [Range(0f, 1f)]
-        public float animationMoveSpeed = 1f;
-    }
-
-    [System.Serializable]
-    private class RollSettings
-    {
-        [Range(0.3f, 1f)] public float rollHeightMultiplier = 0.65f;
-        public float rollCeilingClearance = 0.25f;
-        public float durationFallback = 0.9f;
-    }
-
-    [System.Serializable]
-    private class BarSettings
-    {
-        [Header("References")]
-        public Transform handAnchor;
-
-        [Header("Timing")]
-        public float snapDuration = 0.12f;
-        public float swingDuration = 0.75f;
-
-        [Header("Release")]
-        public float releaseVerticalVelocity = 4f;
-
-        [Header("Fallback Hand Estimate")]
-        [Range(0.5f, 1f)] public float estimatedHandHeight = 0.78f;
-
-        [Header("Fine Tune")]
-        public Vector3 handOffsetCorrection = Vector3.zero;
-    }
-
-    [System.Serializable]
-    private class DeathCheckSettings
-    {
-        public LayerMask obstacleMask;
-        public float frontCheckDistance = 0.25f;
-        public float sideHitNormalThreshold = 0.6f;
-    }
-
     [Header("Input")]
-    [SerializeField] private InputSettings input = new InputSettings();
-
-    [Header("Movement")]
-    [SerializeField] private MovementSettings movement = new MovementSettings();
-
-    [Header("Roll")]
-    [SerializeField] private RollSettings roll = new RollSettings();
-
-    [Header("Bar Swing")]
-    [SerializeField] private BarSettings bar = new BarSettings();
-
-    [Header("Death Check")]
-    [SerializeField] private DeathCheckSettings deathCheck = new DeathCheckSettings();
+    [SerializeField] private InputActionReference moveAction;
+    [SerializeField] private InputActionReference jumpAction;
+    [SerializeField] private InputActionReference crouchAction;
 
     [Header("References")]
     [SerializeField] private Animator characterAnimator;
     [SerializeField] private CharacterController characterController;
+    [SerializeField] private ProceduralAltitudeSpawner worldSpawner;
+
+    [Header("Movement")]
+    [SerializeField] private float moveSpeed = 5f;
+    [SerializeField] private float jumpVelocity = 6f;
+    [SerializeField] private float gravity = -14f;
+    [SerializeField] private int maxJumps = 2;
+
+    [Range(0f, 1f)]
+    [SerializeField] private float animationMoveSpeed = 1f;
+
+    [Header("Roll / Crouch Collider")]
+    [SerializeField, Range(0.3f, 1f)] private float rollHeightMultiplier = 0.65f;
+    [SerializeField] private float rollCeilingClearance = 0.25f;
+    [SerializeField] private float rollDurationFallback = 0.9f;
+
+    [Header("Bar Swing")]
+    [SerializeField] private Transform leftHand;
+    [SerializeField] private Transform rightHand;
+    [SerializeField] private float swingReleaseVelocity = 4f;
+    [SerializeField] private float swingDurationFallback = 0.8f;
+
+    [Header("Bar Grab Window")]
+    [SerializeField] private float maxGrabDistance = 0.9f;
+    [SerializeField] private float grabWindowDuration = 0.45f;
+
+    [Header("Bar Pull")]
+    [SerializeField] private float barPullStrength = 18f;
+    [SerializeField] private float barAttachDistance = 0.08f;
+    [SerializeField] private float maxPullStepPerFrame = 0.35f;
+
+    [Header("Fallback Hand Estimate")]
+    [SerializeField, Range(0.5f, 1f)] private float estimatedHandHeight = 0.78f;
+
+    [Header("Death Check")]
+    [SerializeField] private LayerMask obstacleMask;
+    [SerializeField] private float frontCheckDistance = 0.25f;
+    [SerializeField] private float sideHitNormalThreshold = 0.6f;
 
     private PlayerState state = PlayerState.Normal;
 
+    private bool isDead;
     private float verticalVelocity;
     private int jumpsUsed;
-    private bool isDead;
 
     private float standingHeight;
     private Vector3 standingCenter;
+    private float gameplayPlaneZ;
 
     private float rollTimer;
 
     private BarInteractable currentBar;
-    private float barSnapTimer;
-    private float swingTimer;
-    private Vector3 barSnapStartPosition;
+    private float attachedTimer;
+
+    private bool grabWindowOpen;
+    private float grabWindowTimer;
 
     private void Awake()
     {
@@ -121,26 +96,36 @@ public class PlayerController : MonoBehaviour
 
         standingHeight = characterController.height;
         standingCenter = characterController.center;
+        gameplayPlaneZ = transform.position.z;
+
+        if (worldSpawner == null)
+            worldSpawner = FindFirstObjectByType<ProceduralAltitudeSpawner>();
     }
 
     private void OnEnable()
     {
-        input.moveAction.action.Enable();
-        input.jumpAction.action.Enable();
-        input.crouchAction.action.Enable();
+        moveAction.action.Enable();
+        jumpAction.action.Enable();
+        crouchAction.action.Enable();
 
-        input.jumpAction.action.performed += OnJump;
-        input.crouchAction.action.performed += OnCrouch;
+        jumpAction.action.performed += OnJump;
+        crouchAction.action.performed += OnCrouch;
     }
 
     private void OnDisable()
     {
-        input.jumpAction.action.performed -= OnJump;
-        input.crouchAction.action.performed -= OnCrouch;
+        jumpAction.action.performed -= OnJump;
+        crouchAction.action.performed -= OnCrouch;
 
-        input.moveAction.action.Disable();
-        input.jumpAction.action.Disable();
-        input.crouchAction.action.Disable();
+        moveAction.action.Disable();
+        jumpAction.action.Disable();
+        crouchAction.action.Disable();
+
+        if (characterController != null)
+            characterController.enabled = true;
+
+        if (worldSpawner != null)
+            worldSpawner.EndBarTracking();
     }
 
     private void Update()
@@ -158,12 +143,16 @@ public class PlayerController : MonoBehaviour
                 UpdateRolling();
                 break;
 
-            case PlayerState.BarSnapping:
-                UpdateBarSnapping();
+            case PlayerState.BarReaching:
+                UpdateBarReaching();
                 break;
 
-            case PlayerState.BarSwinging:
-                UpdateBarSwinging();
+            case PlayerState.BarPulling:
+                UpdateBarPulling();
+                break;
+
+            case PlayerState.BarAttached:
+                UpdateBarAttached();
                 break;
         }
 
@@ -173,17 +162,9 @@ public class PlayerController : MonoBehaviour
     private void UpdateNormal()
     {
         CheckFrontObstacleDeath();
-
-        bool grounded = characterController.isGrounded;
-
-        if (grounded && verticalVelocity < 0f)
-        {
-            verticalVelocity = -2f;
-            jumpsUsed = 0;
-        }
-
+        HandleGroundedReset();
         ApplyGravity();
-        MoveCharacter();
+        MoveVertically();
     }
 
     private void UpdateRolling()
@@ -198,77 +179,137 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        bool grounded = characterController.isGrounded;
+        HandleGroundedReset();
+        ApplyGravity();
+        MoveVertically();
+    }
+
+    private void UpdateBarReaching()
+    {
+        if (currentBar == null)
+        {
+            ReleaseFromBar(false);
+            return;
+        }
+
+        // Keep the natural jump/fall arc while reaching.
+        HandleGroundedReset();
+        ApplyGravity();
+        MoveVertically();
+        KeepPlayerOnGameplayPlane();
+
+        if (!grabWindowOpen)
+            return;
+
+        grabWindowTimer -= Time.deltaTime;
+
+        if (grabWindowTimer <= 0f)
+        {
+            ReleaseFromBar(false);
+            return;
+        }
+
+        TryStartPullToBarIfCloseEnough();
+    }
+
+    private void UpdateBarPulling()
+    {
+        if (currentBar == null)
+        {
+            ReleaseFromBar(false);
+            return;
+        }
+
+        if (characterController.enabled)
+            characterController.enabled = false;
+
+        Vector3 handCenter = GetHandCenterPosition();
+        Vector3 correction = currentBar.AttachPosition - handCenter;
+
+        Debug.DrawLine(handCenter, currentBar.AttachPosition, Color.yellow);
+
+        // Do not allow forward/backward correction to snap the camera.
+        // Z tracking is handled by the spawner after attach.
+        correction.z = 0f;
+
+        float followT = 1f - Mathf.Exp(-barPullStrength * Time.deltaTime);
+        Vector3 pullMovement = correction * followT;
+
+        pullMovement = Vector3.ClampMagnitude(pullMovement, maxPullStepPerFrame);
+
+        transform.position += pullMovement;
+        KeepPlayerOnGameplayPlane();
+
+        Vector3 remaining = currentBar.AttachPosition - GetHandCenterPosition();
+        remaining.z = 0f;
+
+        if (remaining.magnitude <= barAttachDistance)
+        {
+            AttachToBar();
+        }
+    }
+
+    private void UpdateBarAttached()
+    {
+        if (currentBar == null)
+        {
+            ReleaseFromBar(true);
+            return;
+        }
+
+        if (characterController.enabled)
+            characterController.enabled = false;
+
+        // Once attached, the spawner tracks the bar to the hands.
+        KeepPlayerOnGameplayPlane();
+
+        attachedTimer -= Time.deltaTime;
+
+        if (attachedTimer <= 0f)
+        {
+            ReleaseFromBar(true);
+        }
+    }
+
+    private void AttachToBar()
+    {
+        attachedTimer = swingDurationFallback;
+        state = PlayerState.BarAttached;
+
+        if (worldSpawner != null)
+        {
+            worldSpawner.BeginBarTracking(
+                currentBar.AttachPointTransform,
+                leftHand,
+                rightHand
+            );
+        }
+    }
+
+    private void HandleGroundedReset()
+    {
+        bool grounded = characterController.enabled && characterController.isGrounded;
 
         if (grounded && verticalVelocity < 0f)
         {
             verticalVelocity = -2f;
             jumpsUsed = 0;
         }
-
-        ApplyGravity();
-        MoveCharacter();
-    }
-
-    private void UpdateBarSnapping()
-    {
-        if (currentBar == null)
-        {
-            ReleaseFromBar();
-            return;
-        }
-
-        barSnapTimer += Time.deltaTime;
-
-        float t = Mathf.Clamp01(barSnapTimer / Mathf.Max(0.01f, bar.snapDuration));
-        t = Smooth01(t);
-
-        Vector3 targetPosition = GetPlayerRootPositionForBar();
-
-        characterController.enabled = false;
-        transform.position = Vector3.Lerp(barSnapStartPosition, targetPosition, t);
-
-        Debug.DrawLine(transform.position, targetPosition, Color.yellow);
-
-        if (t >= 1f)
-        {
-            transform.position = targetPosition;
-            swingTimer = bar.swingDuration;
-            state = PlayerState.BarSwinging;
-        }
-    }
-
-    private void UpdateBarSwinging()
-    {
-        if (currentBar == null)
-        {
-            ReleaseFromBar();
-            return;
-        }
-
-        characterController.enabled = false;
-
-        // Keep hands locked to the live moving bar.
-        transform.position = GetPlayerRootPositionForBar();
-
-        swingTimer -= Time.deltaTime;
-
-        if (swingTimer <= 0f)
-        {
-            ReleaseFromBar();
-        }
     }
 
     private void ApplyGravity()
     {
-        verticalVelocity += movement.gravity * Time.deltaTime;
+        verticalVelocity += gravity * Time.deltaTime;
     }
 
-    private void MoveCharacter()
+    private void MoveVertically()
     {
+        if (!characterController.enabled)
+            return;
+
         Vector3 velocity = Vector3.zero;
 
-        // World moves, player does not move forward.
+        // World moves. Player does not move forward.
         velocity.z = 0f;
         velocity.y = verticalVelocity;
 
@@ -277,18 +318,23 @@ public class PlayerController : MonoBehaviour
 
     private void OnJump(InputAction.CallbackContext context)
     {
-        if (state == PlayerState.BarSnapping || state == PlayerState.BarSwinging)
+        if (state == PlayerState.BarReaching ||
+            state == PlayerState.BarPulling ||
+            state == PlayerState.BarAttached)
         {
-            ReleaseFromBar();
-            verticalVelocity = movement.jumpVelocity;
+            ReleaseFromBar(false);
+            verticalVelocity = jumpVelocity;
             TriggerJump();
             return;
         }
 
-        if (jumpsUsed >= movement.maxJumps)
+        if (state == PlayerState.Rolling)
             return;
 
-        verticalVelocity = movement.jumpVelocity;
+        if (jumpsUsed >= maxJumps)
+            return;
+
+        verticalVelocity = jumpVelocity;
         jumpsUsed++;
 
         TriggerJump();
@@ -316,7 +362,7 @@ public class PlayerController : MonoBehaviour
     private void StartRoll()
     {
         state = PlayerState.Rolling;
-        rollTimer = roll.durationFallback;
+        rollTimer = rollDurationFallback;
 
         characterController.height = RollHeight;
         characterController.center = new Vector3(
@@ -351,29 +397,33 @@ public class PlayerController : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        BarInteractable detectedBar = other.GetComponentInParent<BarInteractable>();
+        BarInteractable bar = other.GetComponentInParent<BarInteractable>();
 
-        if (detectedBar == null)
+        if (bar == null)
             return;
 
-        TryCatchBar(detectedBar);
+        TryStartBarReach(bar);
     }
 
-    private void TryCatchBar(BarInteractable detectedBar)
+    private void TryStartBarReach(BarInteractable bar)
     {
-        if (state == PlayerState.BarSnapping || state == PlayerState.BarSwinging)
+        if (state != PlayerState.Normal && state != PlayerState.Rolling)
             return;
 
         if (characterController.isGrounded)
             return;
 
-        currentBar = detectedBar;
-        barSnapTimer = 0f;
-        barSnapStartPosition = transform.position;
+        if (state == PlayerState.Rolling)
+            EndRoll();
 
-        verticalVelocity = 0f;
+        currentBar = bar;
+        state = PlayerState.BarReaching;
 
-        state = PlayerState.BarSnapping;
+        grabWindowOpen = false;
+        grabWindowTimer = 0f;
+
+        // Do not zero verticalVelocity.
+        // The player should keep their natural jump arc.
 
         if (characterAnimator != null)
         {
@@ -384,32 +434,91 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    private Vector3 GetPlayerRootPositionForBar()
+    // Animation Event:
+    // Put this on the frame where hands are visually ready to grab.
+    public void OnBarGrabFrame()
     {
-        Vector3 handOffsetFromRoot = GetHandOffsetFromRoot();
-        return currentBar.AttachPosition - handOffsetFromRoot;
-    }
+        if (state != PlayerState.BarReaching)
+            return;
 
-    private Vector3 GetHandOffsetFromRoot()
-    {
-        if (bar.handAnchor != null)
+        if (currentBar == null)
         {
-            return bar.handAnchor.position - transform.position + bar.handOffsetCorrection;
+            ReleaseFromBar(false);
+            return;
         }
 
-        Vector3 estimatedOffset = Vector3.up * (standingHeight * bar.estimatedHandHeight);
-        return estimatedOffset + bar.handOffsetCorrection;
+        grabWindowOpen = true;
+        grabWindowTimer = grabWindowDuration;
+
+        TryStartPullToBarIfCloseEnough();
     }
 
-    private void ReleaseFromBar()
+    private void TryStartPullToBarIfCloseEnough()
     {
+        if (currentBar == null)
+            return;
+
+        Vector3 handCenter = GetHandCenterPosition();
+        Vector3 toBar = currentBar.AttachPosition - handCenter;
+
+        Debug.DrawLine(handCenter, currentBar.AttachPosition, Color.magenta);
+
+        if (toBar.magnitude > maxGrabDistance)
+            return;
+
+        grabWindowOpen = false;
+        grabWindowTimer = 0f;
+
+        verticalVelocity = 0f;
+
+        if (characterController.enabled)
+            characterController.enabled = false;
+
+        state = PlayerState.BarPulling;
+    }
+
+    // Animation Event:
+    // Put this near the end of the swing animation.
+    public void OnSwingFinished()
+    {
+        if (state == PlayerState.BarReaching ||
+            state == PlayerState.BarPulling ||
+            state == PlayerState.BarAttached)
+        {
+            ReleaseFromBar(true);
+        }
+    }
+
+    private Vector3 GetHandCenterPosition()
+    {
+        if (leftHand != null && rightHand != null)
+        {
+            return (leftHand.position + rightHand.position) * 0.5f;
+        }
+
+        return transform.position + Vector3.up * (standingHeight * estimatedHandHeight);
+    }
+
+    private void ReleaseFromBar(bool applyReleaseVelocity)
+    {
+        grabWindowOpen = false;
+        grabWindowTimer = 0f;
+
         currentBar = null;
+
+        if (worldSpawner != null)
+            worldSpawner.EndBarTracking();
 
         if (!characterController.enabled)
             characterController.enabled = true;
 
-        verticalVelocity = bar.releaseVerticalVelocity;
-        jumpsUsed = 1;
+        KeepPlayerOnGameplayPlane();
+
+        if (applyReleaseVelocity)
+        {
+            verticalVelocity = swingReleaseVelocity;
+            jumpsUsed = 1;
+        }
 
         state = PlayerState.Normal;
 
@@ -418,12 +527,24 @@ public class PlayerController : MonoBehaviour
             characterAnimator.ResetTrigger("Swing");
             characterAnimator.SetBool("Grounded", false);
             characterAnimator.SetFloat("VerticalVel", verticalVelocity);
-            characterAnimator.SetFloat("Speed", movement.animationMoveSpeed);
+            characterAnimator.SetFloat("Speed", animationMoveSpeed);
         }
+    }
+
+    private void KeepPlayerOnGameplayPlane()
+    {
+        Vector3 position = transform.position;
+        position.z = gameplayPlaneZ;
+        transform.position = position;
     }
 
     private void CheckFrontObstacleDeath()
     {
+        if (state == PlayerState.BarReaching ||
+            state == PlayerState.BarPulling ||
+            state == PlayerState.BarAttached)
+            return;
+
         Vector3 center = transform.position + characterController.center;
 
         float radius = characterController.radius * 0.9f;
@@ -434,7 +555,7 @@ public class PlayerController : MonoBehaviour
 
         Vector3 direction = Vector3.forward;
 
-        Debug.DrawLine(center, center + direction * deathCheck.frontCheckDistance, Color.cyan);
+        Debug.DrawLine(center, center + direction * frontCheckDistance, Color.cyan);
 
         bool hitSomething = Physics.CapsuleCast(
             bottom,
@@ -442,8 +563,8 @@ public class PlayerController : MonoBehaviour
             radius,
             direction,
             out RaycastHit hit,
-            deathCheck.frontCheckDistance,
-            deathCheck.obstacleMask,
+            frontCheckDistance,
+            obstacleMask,
             QueryTriggerInteraction.Ignore
         );
 
@@ -453,7 +574,7 @@ public class PlayerController : MonoBehaviour
         Debug.DrawRay(hit.point, hit.normal * 1.5f, Color.red);
 
         bool isWallInFront =
-            Vector3.Dot(hit.normal, -direction) > deathCheck.sideHitNormalThreshold &&
+            Vector3.Dot(hit.normal, -direction) > sideHitNormalThreshold &&
             hit.normal.y < 0.5f;
 
         if (isWallInFront)
@@ -465,21 +586,24 @@ public class PlayerController : MonoBehaviour
         if (characterAnimator == null)
             return;
 
-        bool grounded = characterController.enabled && characterController.isGrounded;
+        bool grounded =
+            characterController.enabled &&
+            characterController.isGrounded &&
+            state != PlayerState.BarReaching &&
+            state != PlayerState.BarPulling &&
+            state != PlayerState.BarAttached;
 
         characterAnimator.SetBool("Grounded", grounded);
         characterAnimator.SetFloat("VerticalVel", verticalVelocity);
-        characterAnimator.SetFloat("Speed", movement.animationMoveSpeed, 0.15f, Time.deltaTime);
-    }
-
-    private static float Smooth01(float t)
-    {
-        return t * t * (3f - 2f * t);
+        characterAnimator.SetFloat("Speed", animationMoveSpeed, 0.15f, Time.deltaTime);
     }
 
     private void Die()
     {
         isDead = true;
+
+        if (worldSpawner != null)
+            worldSpawner.EndBarTracking();
 
         string currentSceneName = SceneManager.GetActiveScene().name;
         SceneManager.LoadScene(currentSceneName);

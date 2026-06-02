@@ -14,7 +14,6 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         BarSwing
     }
 
-
     [Header("References")]
     [SerializeField] private Transform player;
     [SerializeField] private PlayerController playerController;
@@ -22,17 +21,23 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     [Header("World Movement")]
     [SerializeField] private float worldSpeed = 6f;
 
+    [Header("Bar Tracking")]
+    [SerializeField] private bool trackYDuringBar = false;
+    [SerializeField] private bool trackBackgroundDuringBar = true;
+    [SerializeField] private float maxBarTrackingStep = 0.5f;
+
     [Header("Platform Visuals")]
     [SerializeField] private Material platformMaterial;
     [SerializeField] private Material ceilingMaterial;
     [SerializeField] private float platformHeight = 1f;
-    [SerializeField] private float platformDepth = 4f;
     [SerializeField] private float platformWidthX = 5f;
 
     [Header("Generation")]
     [SerializeField] private float spawnAheadDistance = 90f;
     [SerializeField] private float despawnBehindDistance = 35f;
     [SerializeField] private int maxGenerationAttempts = 30;
+    [SerializeField] private int startGenerationSafetyLimit = 100;
+    [SerializeField] private int updateGenerationSafetyLimit = 20;
 
     [Header("Platform Size")]
     [SerializeField] private float minPlatformLength = 4f;
@@ -52,10 +57,9 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     [SerializeField] private float stepUpMin = 0.75f;
     [SerializeField] private float stepUpMax = 2.25f;
     [SerializeField] private float dropMin = 3f;
-    [SerializeField] private float dropMax = 6f;
+    [SerializeField] private float dropMax = 5f;
 
-    [Header("Split Path")]
-    [SerializeField] private float pathXOffset = 4f;
+    [Header("Vertical Split Path")]
     [SerializeField] private float splitPathPlatformLength = 6f;
     [SerializeField] private int splitPathSegments = 3;
 
@@ -63,11 +67,19 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     [SerializeField] private bool addLowCeilingAfterRollDrop = true;
     [SerializeField] private float lowCeilingExtraMargin = 0.15f;
     [SerializeField] private float lowCeilingLength = 8f;
-    [SerializeField] private float lowCeilingThickness = 0.8f;
     [SerializeField] private float lowCeilingTopBlockHeight = 8f;
+
     [Header("Roll Tunnel Timing")]
-    [SerializeField] private float rollLandingBufferDistance = 5f;
+    [SerializeField] private float rollLandingBufferDistance = 6f;
     [SerializeField] private float rollExitBufferDistance = 3f;
+
+    [Header("Bar Swing")]
+    [SerializeField] private GameObject barPrefab;
+    [SerializeField] private float barGap = 5f;
+    [SerializeField] private float barPlatformLength = 8f;
+    [SerializeField] private float barHeightAboveStart = 3.2f;
+    [SerializeField] private float barZOffsetFromGapStart = 2.2f;
+    [SerializeField] private float barLandingHeightChange = 1.5f;
 
     [Header("Reachability Simulation")]
     [SerializeField] private float simulationTimeStep = 0.02f;
@@ -83,13 +95,11 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     [SerializeField] private int backgroundChunksOnScreen = 2;
     [SerializeField] private Vector3 backgroundOffset = Vector3.zero;
     [SerializeField] private float backgroundDespawnBehindDistance = 120f;
-    [Header("Bar Swing")]
-    [SerializeField] private GameObject barPrefab;
-    [SerializeField] private float barGap = 5.0f;
-    [SerializeField] private float barPlatformLength = 8f;
-    [SerializeField] private float barHeightAboveStart = 3.2f;
-    [SerializeField] private float barZOffsetFromGapStart = 2.2f;
-    [SerializeField] private float barLandingHeightChange = 1.5f;
+
+    [Header("Debug")]
+    [SerializeField] private bool debugSpawnBarsOften = false;
+    [SerializeField] private int debugBarEverySections = 2;
+
     private readonly List<GameObject> activeGameplayObjects = new List<GameObject>();
     private readonly List<GameObject> activeBackgroundChunks = new List<GameObject>();
 
@@ -99,13 +109,73 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     private float nextBackgroundSpawnZ;
     private int generatedSections;
 
+    private bool isBarTracking;
+    private Transform trackedBarAttachPoint;
+    private Transform trackedLeftHand;
+    private Transform trackedRightHand;
+
     private void Start()
+    {
+        if (!ValidateSetup())
+            return;
+
+        CreateStartPlatform();
+        GenerateUntilAhead(startGenerationSafetyLimit);
+
+        for (int i = 0; i < backgroundChunksOnScreen; i++)
+        {
+            SpawnBackgroundChunk();
+        }
+    }
+
+    private void Update()
+    {
+        if (isBarTracking)
+        {
+            MoveWorldToTrackBar();
+        }
+        else
+        {
+            MoveWorldNormally();
+        }
+
+        GenerateUntilAhead(updateGenerationSafetyLimit);
+
+        RemoveOldGameplayObjects();
+        RemoveOldBackgroundChunks();
+
+        while (activeBackgroundChunks.Count < backgroundChunksOnScreen)
+        {
+            SpawnBackgroundChunk();
+        }
+    }
+
+    public void BeginBarTracking(Transform barAttachPoint, Transform leftHand, Transform rightHand)
+    {
+        if (barAttachPoint == null || leftHand == null || rightHand == null)
+            return;
+
+        trackedBarAttachPoint = barAttachPoint;
+        trackedLeftHand = leftHand;
+        trackedRightHand = rightHand;
+        isBarTracking = true;
+    }
+
+    public void EndBarTracking()
+    {
+        isBarTracking = false;
+        trackedBarAttachPoint = null;
+        trackedLeftHand = null;
+        trackedRightHand = null;
+    }
+
+    private bool ValidateSetup()
     {
         if (player == null)
         {
             Debug.LogError("No player assigned to ProceduralAltitudeSpawner.");
             enabled = false;
-            return;
+            return false;
         }
 
         if (playerController == null)
@@ -117,56 +187,101 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         {
             Debug.LogError("No PlayerController found on player.");
             enabled = false;
+            return false;
+        }
+
+        if (worldSpeed <= 0.01f)
+        {
+            Debug.LogError("World speed is too small.");
+            enabled = false;
+            return false;
+        }
+
+        return true;
+    }
+
+    private void GenerateUntilAhead(int safetyLimit)
+    {
+        int safety = 0;
+
+        while (nextPlatformStartZ < spawnAheadDistance && safety < safetyLimit)
+        {
+            GenerateNextSection();
+            safety++;
+        }
+
+        if (safety >= safetyLimit)
+        {
+            Debug.LogWarning("Generation safety limit hit. Check platform/gap/jump settings.");
+        }
+    }
+
+    private void MoveWorldNormally()
+    {
+        Vector3 move = Vector3.back * (worldSpeed * Time.deltaTime);
+        MoveGameplayObjects(move);
+        MoveBackgroundObjects(move);
+
+        nextPlatformStartZ += move.z;
+        nextBackgroundSpawnZ += move.z;
+    }
+
+    private void MoveWorldToTrackBar()
+    {
+        if (trackedBarAttachPoint == null || trackedLeftHand == null || trackedRightHand == null)
+        {
+            EndBarTracking();
             return;
         }
 
-        CreateStartPlatform();
+        Vector3 handCenter = (trackedLeftHand.position + trackedRightHand.position) * 0.5f;
+        Vector3 correction = handCenter - trackedBarAttachPoint.position;
 
-        while (nextPlatformStartZ < spawnAheadDistance)
-        {
-            GenerateNextSection();
-        }
+        correction.x = 0f;
 
-        for (int i = 0; i < backgroundChunksOnScreen; i++)
+        if (!trackYDuringBar)
+            correction.y = 0f;
+
+        correction = Vector3.ClampMagnitude(correction, maxBarTrackingStep);
+
+        MoveGameplayObjects(correction);
+
+        if (trackBackgroundDuringBar)
+            MoveBackgroundObjects(correction);
+
+        nextPlatformStartZ += correction.z;
+        nextBackgroundSpawnZ += correction.z;
+
+        if (trackYDuringBar)
+            currentPlatformTopY += correction.y;
+    }
+
+    private void MoveGameplayObjects(Vector3 movement)
+    {
+        for (int i = activeGameplayObjects.Count - 1; i >= 0; i--)
         {
-            SpawnBackgroundChunk();
+            if (activeGameplayObjects[i] == null)
+            {
+                activeGameplayObjects.RemoveAt(i);
+                continue;
+            }
+
+            activeGameplayObjects[i].transform.position += movement;
         }
     }
 
-    private void Update()
+    private void MoveBackgroundObjects(Vector3 movement)
     {
-        MoveWorld();
-
-        while (nextPlatformStartZ < spawnAheadDistance)
+        for (int i = activeBackgroundChunks.Count - 1; i >= 0; i--)
         {
-            GenerateNextSection();
+            if (activeBackgroundChunks[i] == null)
+            {
+                activeBackgroundChunks.RemoveAt(i);
+                continue;
+            }
+
+            activeBackgroundChunks[i].transform.position += movement;
         }
-
-        RemoveOldGameplayObjects();
-        RemoveOldBackgroundChunks();
-
-        while (activeBackgroundChunks.Count < backgroundChunksOnScreen)
-        {
-            SpawnBackgroundChunk();
-        }
-    }
-
-    private void MoveWorld()
-    {
-        float moveAmount = worldSpeed * Time.deltaTime;
-
-        for (int i = 0; i < activeGameplayObjects.Count; i++)
-        {
-            activeGameplayObjects[i].transform.position += Vector3.back * moveAmount;
-        }
-
-        for (int i = 0; i < activeBackgroundChunks.Count; i++)
-        {
-            activeBackgroundChunks[i].transform.position += Vector3.back * moveAmount;
-        }
-
-        nextPlatformStartZ -= moveAmount;
-        nextBackgroundSpawnZ -= moveAmount;
     }
 
     private void CreateStartPlatform()
@@ -175,13 +290,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         currentPlatformCenterX = 0f;
         nextPlatformStartZ = 0f;
 
-        CreatePlatform(
-            centerX: 0f,
-            startZ: 0f,
-            length: 16f,
-            topY: 0f,
-            name: "Start_Platform"
-        );
+        CreatePlatform(0f, 0f, 16f, 0f, "Start_Platform");
 
         nextPlatformStartZ = 16f;
     }
@@ -191,7 +300,6 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         generatedSections++;
 
         ChallengeType type = PickChallengeType();
-
         bool generated = false;
 
         switch (type)
@@ -219,22 +327,29 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
             case ChallengeType.SplitPath:
                 generated = GenerateSplitPath();
                 break;
+
             case ChallengeType.BarSwing:
                 generated = GenerateBarSwing();
                 break;
         }
 
         if (!generated)
-        {
-            GenerateRecovery();
-        }
+            generated = GenerateRecovery();
+
+        if (!generated)
+            ForceCreateSafePlatform();
     }
 
     private ChallengeType PickChallengeType()
     {
         float difficulty = GetDifficulty();
 
-        // First few sections should not be too chaotic.
+        if (debugSpawnBarsOften && barPrefab != null)
+        {
+            if (generatedSections > 2 && generatedSections % debugBarEverySections == 0)
+                return ChallengeType.BarSwing;
+        }
+
         if (generatedSections < 4)
         {
             return Random.value < 0.7f ? ChallengeType.Recovery : ChallengeType.StepUp;
@@ -246,7 +361,10 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         float doubleJumpWeight = Mathf.Lerp(0.05f, 0.18f, difficulty);
         float dropRollWeight = Mathf.Lerp(0.05f, 0.13f, difficulty);
         float splitPathWeight = Mathf.Lerp(0.05f, 0.10f, difficulty);
-        float barSwingWeight = Mathf.Lerp(0.03f, 1.0f, difficulty);
+
+        float barSwingWeight = barPrefab != null
+            ? Mathf.Lerp(0.03f, 0.14f, difficulty)
+            : 0f;
 
         float total =
             recoveryWeight +
@@ -258,14 +376,15 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
             barSwingWeight;
 
         float roll = Random.Range(0f, total);
-        return ChallengeType.BarSwing;
 
         if ((roll -= recoveryWeight) <= 0f) return ChallengeType.Recovery;
         if ((roll -= stepUpWeight) <= 0f) return ChallengeType.StepUp;
         if ((roll -= longGapWeight) <= 0f) return ChallengeType.LongGap;
         if ((roll -= doubleJumpWeight) <= 0f) return ChallengeType.DoubleJump;
         if ((roll -= dropRollWeight) <= 0f) return ChallengeType.DropRoll;
+        if ((roll -= splitPathWeight) <= 0f) return ChallengeType.SplitPath;
 
+        return ChallengeType.BarSwing;
     }
 
     private float GetDifficulty()
@@ -274,67 +393,13 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         return Mathf.Clamp01(altitude / difficultyRampAltitude);
     }
 
-    private bool GenerateBarSwing()
-    {
-        if (barPrefab == null)
-        {
-            return false;
-        }
-
-        float gap = barGap;
-        float length = barPlatformLength;
-        float heightChange = barLandingHeightChange;
-
-        bool landingReachable = CanLandOnPlatform(
-            gapStart: gap,
-            gapEnd: gap + length,
-            heightDifference: heightChange
-        );
-
-        if (!landingReachable)
-        {
-            return false;
-        }
-
-        float platformStartZ = nextPlatformStartZ + gap;
-        float landingTopY = currentPlatformTopY + heightChange;
-
-        // Place bar between the old platform and the landing platform.
-        float barZ = nextPlatformStartZ + barZOffsetFromGapStart;
-        float barY = currentPlatformTopY + barHeightAboveStart;
-
-        CreateBar(
-            centerX: currentPlatformCenterX,
-            z: barZ,
-            y: barY
-        );
-
-        CreatePlatform(
-            centerX: currentPlatformCenterX,
-            startZ: platformStartZ,
-            length: length,
-            topY: landingTopY,
-            name: "Bar_Swing_Landing"
-        );
-
-        nextPlatformStartZ = platformStartZ + length;
-        currentPlatformTopY = landingTopY;
-
-        return true;
-    }
     private bool GenerateRecovery()
     {
         float gap = Random.Range(1.5f, 3f);
         float length = recoveryPlatformLength;
         float heightChange = Random.Range(-0.5f, 0.75f) + upwardBias * 0.5f;
 
-        return TryCreateReachablePlatform(
-            gap,
-            length,
-            heightChange,
-            currentPlatformCenterX,
-            "Recovery"
-        );
+        return TryCreateReachablePlatform(gap, length, heightChange, currentPlatformCenterX, "Recovery");
     }
 
     private bool GenerateStepUp()
@@ -343,13 +408,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         float length = Random.Range(minPlatformLength, maxPlatformLength);
         float heightChange = Random.Range(stepUpMin, stepUpMax) + upwardBias;
 
-        return TryCreateReachablePlatform(
-            gap,
-            length,
-            heightChange,
-            currentPlatformCenterX,
-            "Step_Up"
-        );
+        return TryCreateReachablePlatform(gap, length, heightChange, currentPlatformCenterX, "Step_Up");
     }
 
     private bool GenerateLongGap()
@@ -361,9 +420,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
             float heightChange = Random.Range(-1f, 1.25f) + upwardBias;
 
             if (TryCreateReachablePlatform(gap, length, heightChange, currentPlatformCenterX, "Long_Gap"))
-            {
                 return true;
-            }
         }
 
         return false;
@@ -372,9 +429,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     private bool GenerateDoubleJump()
     {
         if (playerController.MaxJumps < 2)
-        {
             return false;
-        }
 
         for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
         {
@@ -383,9 +438,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
             float heightChange = Random.Range(1.5f, 3.8f) + upwardBias;
 
             if (TryCreateReachablePlatform(gap, length, heightChange, currentPlatformCenterX, "Double_Jump"))
-            {
                 return true;
-            }
         }
 
         return false;
@@ -394,7 +447,6 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     private bool GenerateDropRoll()
     {
         float gap = Random.Range(2f, 4f);
-
         float dropAmount = Random.Range(dropMin, dropMax);
         float heightChange = -dropAmount;
 
@@ -414,77 +466,48 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         );
 
         if (!created)
-        {
             return false;
-        }
 
         if (addLowCeilingAfterRollDrop)
         {
             float ceilingStartZ = platformStartZ + rollLandingBufferDistance;
 
             CreateLowCeiling(
-                centerX: currentPlatformCenterX,
-                startZ: ceilingStartZ,
-                length: lowCeilingLength,
-                platformTopY: currentPlatformTopY
+                currentPlatformCenterX,
+                ceilingStartZ,
+                lowCeilingLength,
+                currentPlatformTopY
             );
         }
 
         return true;
     }
+
     private bool GenerateSplitPath()
     {
         float originalTopY = currentPlatformTopY;
 
-        // Entry gap from current platform to the first two-path section
         float entryGap = Random.Range(2.5f, 4.5f);
         float branchStartZ = nextPlatformStartZ + entryGap;
         float branchLength = splitPathPlatformLength;
 
-        // Upper path: requires jump / maybe double jump
         float upperHeightChange = Random.Range(2.0f, 4.0f);
-
-        // Lower path: player can simply drop or take an easier jump
         float lowerHeightChange = -Random.Range(2.5f, 5.0f);
 
-        bool upperReachable = CanLandOnPlatform(
-            gapStart: entryGap,
-            gapEnd: entryGap + branchLength,
-            heightDifference: upperHeightChange
-        );
-
-        // Lower path should be easy/reachable by falling.
-        // For now we allow it if it is below the current platform.
+        bool upperReachable = CanLandOnPlatform(entryGap, entryGap + branchLength, upperHeightChange);
         bool lowerReachable = lowerHeightChange < -1.0f;
 
         if (!upperReachable || !lowerReachable)
-        {
             return false;
-        }
 
         float upperTopY = originalTopY + upperHeightChange;
         float lowerTopY = originalTopY + lowerHeightChange;
 
-        // Same X, different Y.
-        CreatePlatform(
-            centerX: currentPlatformCenterX,
-            startZ: branchStartZ,
-            length: branchLength,
-            topY: upperTopY,
-            name: "Split_Upper_Entry"
-        );
-
-        CreatePlatform(
-            centerX: currentPlatformCenterX,
-            startZ: branchStartZ,
-            length: branchLength,
-            topY: lowerTopY,
-            name: "Split_Lower_Entry"
-        );
+        CreatePlatform(currentPlatformCenterX, branchStartZ, branchLength, upperTopY, "Split_Upper_Entry");
+        CreatePlatform(currentPlatformCenterX, branchStartZ, branchLength, lowerTopY, "Split_Lower_Entry");
 
         float sectionEndZ = branchStartZ + branchLength;
 
-        // Continue both paths for a few segments.
         for (int i = 1; i < splitPathSegments; i++)
         {
             float segmentGap = Random.Range(2.5f, 4.5f);
@@ -495,42 +518,19 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
             upperTopY += Random.Range(-0.5f, 1.2f);
             lowerTopY += Random.Range(-0.8f, 1.0f);
 
-            CreatePlatform(
-                centerX: currentPlatformCenterX,
-                startZ: sectionEndZ,
-                length: segmentLength,
-                topY: upperTopY,
-                name: $"Split_Upper_{i}"
-            );
-
-            CreatePlatform(
-                centerX: currentPlatformCenterX,
-                startZ: sectionEndZ,
-                length: segmentLength,
-                topY: lowerTopY,
-                name: $"Split_Lower_{i}"
-            );
+            CreatePlatform(currentPlatformCenterX, sectionEndZ, segmentLength, upperTopY, $"Split_Upper_{i}");
+            CreatePlatform(currentPlatformCenterX, sectionEndZ, segmentLength, lowerTopY, $"Split_Lower_{i}");
 
             sectionEndZ += segmentLength;
         }
 
-        // Merge both routes back into one platform.
         float mergeGap = Random.Range(2.5f, 4.5f);
         float mergeLength = Random.Range(9f, 13f);
 
         float mergeStartZ = sectionEndZ + mergeGap;
-
-        // Merge height should be reachable from the upper path,
-        // but not too punishing from the lower path.
         float mergeTopY = Mathf.Lerp(lowerTopY, upperTopY, 0.55f);
 
-        CreatePlatform(
-            centerX: currentPlatformCenterX,
-            startZ: mergeStartZ,
-            length: mergeLength,
-            topY: mergeTopY,
-            name: "Split_Merge"
-        );
+        CreatePlatform(currentPlatformCenterX, mergeStartZ, mergeLength, mergeTopY, "Split_Merge");
 
         nextPlatformStartZ = mergeStartZ + mergeLength;
         currentPlatformTopY = mergeTopY;
@@ -538,24 +538,48 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         return true;
     }
 
-    private bool TryCreateReachablePlatform(
-        float gap,
-        float length,
-        float heightChange,
-        float centerX,
-        string name
-    )
+    private bool GenerateBarSwing()
     {
-        bool reachable = CanLandOnPlatform(
-            gapStart: gap,
-            gapEnd: gap + length,
-            heightDifference: heightChange
+        if (barPrefab == null)
+            return false;
+
+        float gap = barGap;
+        float length = barPlatformLength;
+        float heightChange = barLandingHeightChange;
+
+        bool landingReachable = CanLandOnPlatform(gap, gap + length, heightChange);
+
+        if (!landingReachable)
+            return false;
+
+        float platformStartZ = nextPlatformStartZ + gap;
+        float landingTopY = currentPlatformTopY + heightChange;
+
+        float barZ = nextPlatformStartZ + barZOffsetFromGapStart;
+        float barY = currentPlatformTopY + barHeightAboveStart;
+
+        CreateBar(currentPlatformCenterX, barZ, barY);
+
+        CreatePlatform(
+            currentPlatformCenterX,
+            platformStartZ,
+            length,
+            landingTopY,
+            "Bar_Swing_Landing"
         );
 
+        nextPlatformStartZ = platformStartZ + length;
+        currentPlatformTopY = landingTopY;
+
+        return true;
+    }
+
+    private bool TryCreateReachablePlatform(float gap, float length, float heightChange, float centerX, string name)
+    {
+        bool reachable = CanLandOnPlatform(gap, gap + length, heightChange);
+
         if (!reachable)
-        {
             return false;
-        }
 
         float startZ = nextPlatformStartZ + gap;
         float topY = currentPlatformTopY + heightChange;
@@ -569,13 +593,25 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         return true;
     }
 
+    private void ForceCreateSafePlatform()
+    {
+        float gap = 2f;
+        float length = recoveryPlatformLength;
+        float heightChange = 0f;
+
+        float startZ = nextPlatformStartZ + gap;
+        float topY = currentPlatformTopY + heightChange;
+
+        CreatePlatform(currentPlatformCenterX, startZ, length, topY, "Forced_Safe_Platform");
+
+        nextPlatformStartZ = startZ + length;
+        currentPlatformTopY = topY;
+    }
+
     private bool CanLandOnPlatform(float gapStart, float gapEnd, float heightDifference)
     {
         if (worldSpeed <= 0.01f)
-        {
-            Debug.LogError("World speed is too small. Cannot simulate jump.");
             return false;
-        }
 
         float jumpVelocity = playerController.JumpVelocity;
         float gravity = playerController.Gravity;
@@ -594,9 +630,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         foreach (float secondJumpTime in secondJumpTimes)
         {
             if (secondJumpTime > 0f && maxJumps < 2)
-            {
                 continue;
-            }
 
             if (SimulateJumpLanding(
                 gapStart,
@@ -626,9 +660,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     )
     {
         if (simulationTimeStep <= 0.001f)
-        {
             return false;
-        }
 
         float y = 0f;
         float previousY = 0f;
@@ -660,36 +692,19 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
                 y <= heightDifference + landingTolerance;
 
             if (insidePlatformZ && crossedPlatformTop && falling)
-            {
                 return true;
-            }
 
             if (z > gapEnd && y < heightDifference - 3f)
-            {
                 return false;
-            }
         }
 
         return false;
     }
-    private void CreateBar(float centerX, float z, float y)
-    {
-        GameObject bar = Instantiate(
-            barPrefab,
-            new Vector3(centerX, y, z),
-            Quaternion.identity,
-            transform
-        );
 
-        bar.name = "Bar_Swing";
-
-        activeGameplayObjects.Add(bar);
-    }
     private void CreatePlatform(float centerX, float startZ, float length, float topY, string name)
     {
         GameObject platform = GameObject.CreatePrimitive(PrimitiveType.Cube);
         platform.name = name;
-
         platform.transform.SetParent(transform);
 
         platform.transform.position = new Vector3(
@@ -705,9 +720,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         );
 
         if (platformMaterial != null)
-        {
             platform.GetComponent<Renderer>().material = platformMaterial;
-        }
 
         activeGameplayObjects.Add(platform);
     }
@@ -715,13 +728,11 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     private void CreateLowCeiling(float centerX, float startZ, float length, float platformTopY)
     {
         float rollClearance = playerController.RollTotalClearance + lowCeilingExtraMargin;
-
         float ceilingBottomY = platformTopY + rollClearance;
         float blockCenterY = ceilingBottomY + lowCeilingTopBlockHeight * 0.5f;
 
         GameObject ceiling = GameObject.CreatePrimitive(PrimitiveType.Cube);
         ceiling.name = "Roll_Tunnel_Block";
-
         ceiling.transform.SetParent(transform);
 
         ceiling.transform.position = new Vector3(
@@ -737,16 +748,29 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
         );
 
         if (ceilingMaterial != null)
-        {
             ceiling.GetComponent<Renderer>().material = ceilingMaterial;
-        }
         else if (platformMaterial != null)
-        {
             ceiling.GetComponent<Renderer>().material = platformMaterial;
-        }
 
         activeGameplayObjects.Add(ceiling);
     }
+
+    private void CreateBar(float centerX, float z, float y)
+    {
+        if (barPrefab == null)
+            return;
+
+        GameObject bar = Instantiate(
+            barPrefab,
+            new Vector3(centerX, y, z),
+            Quaternion.identity,
+            transform
+        );
+
+        bar.name = "Bar_Swing";
+        activeGameplayObjects.Add(bar);
+    }
+
     private void RemoveOldGameplayObjects()
     {
         for (int i = activeGameplayObjects.Count - 1; i >= 0; i--)
@@ -759,7 +783,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
                 continue;
             }
 
-            float halfLength = obj.transform.localScale.z * 0.5f;
+            float halfLength = Mathf.Abs(obj.transform.localScale.z) * 0.5f;
             float backEdgeZ = obj.transform.position.z + halfLength;
 
             if (backEdgeZ < -despawnBehindDistance)
@@ -773,9 +797,7 @@ public class ProceduralAltitudeSpawner : MonoBehaviour
     private void SpawnBackgroundChunk()
     {
         if (backgroundChunkPrefabs == null || backgroundChunkPrefabs.Length == 0)
-        {
             return;
-        }
 
         int randomIndex = Random.Range(0, backgroundChunkPrefabs.Length);
         GameObject prefab = backgroundChunkPrefabs[randomIndex];
